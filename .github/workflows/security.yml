@@ -1,0 +1,78 @@
+name: DevSecOps Security Pipeline
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # -------------------------
+      # Python Setup
+      # -------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python security tools
+        run: |
+          pip install detect-secrets bandit checkov pre-commit
+
+      # -------------------------
+      # Secret Scanning
+      # -------------------------
+      - name: Detect secrets
+        run: |
+          detect-secrets scan --baseline .secrets.baseline
+
+      # -------------------------
+      # SAST (Python)
+      # -------------------------
+      - name: Bandit scan
+        run: |
+          bandit -r . -ll
+
+      # -------------------------
+      # IaC Security
+      # -------------------------
+      - name: Checkov scan
+        run: |
+          checkov -d .
+
+      # -------------------------
+      # Trivy (FS / IaC / Deps)
+      # -------------------------
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb stable main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      - name: Trivy filesystem scan
+        run: |
+          trivy fs . --severity HIGH,CRITICAL --exit-code 1
+
+      # -------------------------
+      # Snyk Dependency Scan
+      # -------------------------
+      - name: Snyk test
+        uses: snyk/actions/python@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: test
+
