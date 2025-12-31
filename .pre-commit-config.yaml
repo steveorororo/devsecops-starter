@@ -15,7 +15,16 @@ repos:
     rev: 1.9.2
     hooks:
       - id: bandit
-        args: ["-r", ".", "-ll"]
+        name: bandit (python sast)
+        args:
+          - -r
+          - app
+          - --severity-level
+          - medium
+          - --confidence-level
+          - medium
+        exclude: ^(.venv|tests|docs)/
+        pass_filenames: false
 
   # -------------------------
   # IaC Security (Checkov)
@@ -26,7 +35,7 @@ repos:
       - id: checkov
 
   # -------------------------
-  # Dependency & Code Security (Snyk)
+  # Dependency Security (Snyk)
   # -------------------------
   - repo: local
     hooks:
