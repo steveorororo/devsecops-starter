@@ -1,9 +1,9 @@
 name: DevSecOps Security Pipeline
 
 on:
-  pull_request:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
+  pull_request:
 
 permissions:
   contents: read
@@ -14,6 +14,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # -------------------------
+      # Checkout
+      # -------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -23,10 +26,11 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install Python security tools
         run: |
+          python -m pip install --upgrade pip
           pip install detect-secrets bandit checkov pre-commit
 
       # -------------------------
@@ -51,7 +55,7 @@ jobs:
           checkov -d .
 
       # -------------------------
-      # Trivy (FS / IaC / Deps)
+      # Trivy (Filesystem / IaC / Deps)
       # -------------------------
       - name: Install Trivy
         run: |
@@ -75,4 +79,20 @@ jobs:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           command: test
+
+      # -------------------------
+      # Build Container Image
+      # -------------------------
+      - name: Build Docker image
+        run: |
+          docker build -t devsecops-starter:latest .
+
+      # -------------------------
+      # Trivy Container Image Scan
+      # -------------------------
+      - name: Trivy image scan
+        run: |
+          trivy image devsecops-starter:latest \
+            --severity HIGH,CRITICAL \
+            --exit-code 1
 
