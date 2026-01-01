@@ -35,13 +35,22 @@ repos:
       - id: checkov
 
   # -------------------------
-  # Dependency Security (Snyk)
+  # Local Security Controls
   # -------------------------
   - repo: local
     hooks:
+      # Dependency Security (Snyk)
       - id: snyk-test
         name: snyk security scan
         entry: snyk test
         language: system
+        pass_filenames: false
+
+      # Policy-as-Code (OPA / Conftest)
+      - id: conftest-docker
+        name: OPA policy check (Dockerfile)
+        entry: conftest test Dockerfile
+        language: system
+        files: ^Dockerfile$
         pass_filenames: false
 
