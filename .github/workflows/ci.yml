@@ -168,7 +168,7 @@ jobs:
       # -------------------------
       - name: Upload ZAP reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: zap-dast-report
           path: |
@@ -194,7 +194,7 @@ jobs:
       # Upload SBOM
       # -------------------------
       - name: Upload SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: sbom
           path: sbom.spdx.json
