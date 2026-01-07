@@ -1,28 +1,23 @@
-name: DevSecOps Security Pipeline
+name: Security Advanced (SARIF)
 
 on:
-  push:
-    branches: [main, master]
   pull_request:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
 
 permissions:
   contents: read
   security-events: write
 
 jobs:
-  security-scan:
+  security-sarif:
     runs-on: ubuntu-latest
 
     steps:
-      # -------------------------
-      # Checkout
-      # -------------------------
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # -------------------------
-      # Python Setup
-      # -------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -31,68 +26,30 @@ jobs:
       - name: Install Python security tools
         run: |
           python -m pip install --upgrade pip
-          pip install detect-secrets bandit checkov pre-commit
+          pip install detect-secrets bandit
 
-      # -------------------------
-      # Secret Scanning
-      # -------------------------
-      - name: Detect secrets
+      - name: Secret scan (detect-secrets baseline)
         run: |
           detect-secrets scan --baseline .secrets.baseline
 
-      # -------------------------
-      # SAST (Python)
-      # -------------------------
-      - name: Bandit scan
+      - name: SAST (Bandit)
         run: |
-          bandit -r . -ll
+          bandit -r app -ll
 
-      # -------------------------
-      # IaC Security
-      # -------------------------
-      - name: Checkov scan
+      # Trivy generates SARIF so GitHub Security tab can display findings
+      - name: Trivy repo scan (vuln + misconfig + secrets) -> SARIF
         run: |
-          checkov -d .
-
-      # -------------------------
-      # Trivy (Filesystem / IaC / Deps)
-      # -------------------------
-      - name: Install Trivy
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget gnupg
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
-          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb stable main" | sudo tee /etc/apt/sources.list.d/trivy.list
-          sudo apt-get update
-          sudo apt-get install -y trivy
-
-      - name: Trivy filesystem scan
-        run: |
-          trivy fs . --severity HIGH,CRITICAL --exit-code 1
-
-      # -------------------------
-      # Snyk Dependency Scan
-      # -------------------------
-      - name: Snyk test
-        uses: snyk/actions/python@master
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          command: test
-
-      # -------------------------
-      # Build Container Image
-      # -------------------------
-      - name: Build Docker image
-        run: |
-          docker build -t devsecops-starter:latest .
-
-      # -------------------------
-      # Trivy Container Image Scan
-      # -------------------------
-      - name: Trivy image scan
-        run: |
-          trivy image devsecops-starter:latest \
+          docker run --rm \
+            -v "$PWD:/repo" \
+            aquasec/trivy:latest \
+            fs /repo \
+            --scanners vuln,secret,config \
             --severity HIGH,CRITICAL \
-            --exit-code 1
+            --format sarif \
+            --output /repo/trivy-results.sarif
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
 

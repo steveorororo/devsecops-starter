@@ -10,3 +10,12 @@ env/
 # OS / Editor
 .DS_Store
 .vscode/
+cosign.key
+
+
+#rendered 
+rendered.yaml
+*.sarif
+*-results.json
+conftest_*.tar.gz*
+

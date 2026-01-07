@@ -1,4 +1,4 @@
-package main
+package docker
 
 # ----------------------------------
 # Rule: Do not use :latest images

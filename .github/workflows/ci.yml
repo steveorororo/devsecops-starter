@@ -2,36 +2,224 @@ name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
+
+# 🔐 Required for OIDC, signing & SARIF upload
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
+      # -------------------------
+      # Checkout source code
+      # -------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # -------------------------
+      # Set up Python
+      # -------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      # -------------------------
+      # Install dependencies
+      # -------------------------
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install -r requirements-dev.txt
 
+      # -------------------------
+      # Unit tests
+      # -------------------------
+      - name: Run tests
+        run: pytest -q
+
+      # -------------------------
+      # SAST - Bandit
+      # -------------------------
+      - name: SAST (Bandit)
+        run: |
+          pip install bandit
+          bandit -r app -ll
+
+      # -------------------------
+      # SCA - Snyk
+      # -------------------------
+      - name: SCA (Snyk)
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          npm install -g snyk
+          snyk test --severity-threshold=medium
+
+      # -------------------------
+      # IaC Security - Checkov
+      # -------------------------
+      - name: IaC Security (Checkov)
+        run: |
+          pip install checkov
+          checkov -d .
+
+      # -------------------------
+      # Install Helm
+      # -------------------------
+      - name: Install Helm
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      # -------------------------
+      # Install Conftest (OPA)
+      # -------------------------
       - name: Install Conftest
         run: |
           wget https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_0.56.0_Linux_x86_64.tar.gz
           tar xzf conftest_0.56.0_Linux_x86_64.tar.gz
           sudo mv conftest /usr/local/bin/
 
-      - name: Policy as Code (OPA)
+      # -------------------------
+      # Policy-as-Code (OPA) - Dockerfile
+      # -------------------------
+      - name: Policy-as-Code (OPA - Docker)
         run: |
           conftest test Dockerfile
 
-      - name: Run tests
-        run: pytest -q
+      # -------------------------
+      # Helm Security (OPA)
+      # -------------------------
+      - name: Helm Security (OPA)
+        run: |
+          helm template myapp ./charts/myapp > rendered.yaml
+          conftest test rendered.yaml --policy policy/helm
+
+      # -------------------------
+      # Kubernetes Security (OPA → JSON)
+      # -------------------------
+      - name: Kubernetes Security (OPA)
+        run: |
+          conftest test k8s \
+            --policy policy/kubernetes \
+            --output json > k8s-opa-results.json
+
+      # -------------------------
+      # Convert OPA JSON → SARIF
+      # -------------------------
+      - name: Convert OPA results to SARIF
+        run: |
+          python scripts/conftest_to_sarif.py k8s-opa-results.json > k8s-opa.sarif
+
+      # -------------------------
+      # Upload OPA SARIF to GitHub Security
+      # -------------------------
+      - name: Upload OPA results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: k8s-opa.sarif
+
+      # -------------------------
+      # Build Docker image
+      # -------------------------
+      - name: Build Docker image
+        run: |
+          docker build -t devsecops-app:ci .
+
+      # -------------------------
+      # Verify image signature (Cosign)
+      # -------------------------
+      - name: Verify image signature (Cosign)
+        run: |
+          cosign verify devsecops-app:ci \
+            --certificate-identity-regexp "https://github.com/.*/.github/workflows/.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+      # -------------------------
+      # Run application
+      # -------------------------
+      - name: Run application
+        run: |
+          docker run -d -p 8000:8000 devsecops-app:ci
+
+      # -------------------------
+      # DAST - OWASP ZAP (Baseline)
+      # -------------------------
+      - name: DAST (OWASP ZAP)
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/zap/wrk \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+              -t http://host.docker.internal:8000 \
+              -r zap-report.html \
+              -J zap-report.json \
+              -m 1
+
+      # -------------------------
+      # Upload ZAP reports
+      # -------------------------
+      - name: Upload ZAP reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-dast-report
+          path: |
+            zap-report.html
+            zap-report.json
+
+      # -------------------------
+      # Install Syft (SBOM)
+      # -------------------------
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+          | sudo sh -s -- -b /usr/local/bin
+
+      # -------------------------
+      # Generate SBOM
+      # -------------------------
+      - name: Generate SBOM (SPDX)
+        run: |
+          syft . -o spdx-json > sbom.spdx.json
+
+      # -------------------------
+      # Upload SBOM
+      # -------------------------
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
+
+      # -------------------------
+      # Install Cosign
+      # -------------------------
+      - name: Install Cosign
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/sigstore/cosign/main/install.sh \
+          | sudo sh -s -- -b /usr/local/bin
+
+      # -------------------------
+      # Sign SBOM (keyless, OIDC)
+      # -------------------------
+      - name: Sign SBOM
+        run: |
+          cosign sign-blob sbom.spdx.json
+
+      # -------------------------
+      # Verify SBOM signature
+      # -------------------------
+      - name: Verify SBOM signature
+        run: |
+          cosign verify-blob sbom.spdx.json \
+            --certificate-identity-regexp "https://github.com/.*/.github/workflows/.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
 

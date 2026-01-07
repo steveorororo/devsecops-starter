@@ -1,0 +1,18 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequirednonroot
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredNonRoot
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequirednonroot
+
+        violation[{"msg": msg}] {
+          not input.review.object.spec.securityContext.runAsNonRoot
+          msg := "runAsNonRoot must be true"
+        }

@@ -1,0 +1,7 @@
+[
+	{
+		"filename": "k8s/deployment.yaml",
+		"namespace": "main",
+		"successes": 0
+	}
+]

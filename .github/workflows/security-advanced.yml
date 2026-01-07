@@ -1,0 +1,74 @@
+name: Security Advanced (SARIF)
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  security-sarif:
+    runs-on: ubuntu-latest
+
+    steps:
+      # -------------------------
+      # Checkout
+      # -------------------------
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # -------------------------
+      # Python Setup
+      # -------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # -------------------------
+      # Install Tools
+      # -------------------------
+      - name: Install Python security tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install detect-secrets bandit
+
+      # -------------------------
+      # Secret Scan
+      # -------------------------
+      - name: Detect secrets
+        run: |
+          detect-secrets scan --baseline .secrets.baseline
+
+      # -------------------------
+      # SAST (Bandit)
+      # -------------------------
+      - name: Bandit scan
+        run: |
+          bandit -r app -ll
+
+      # -------------------------
+      # Trivy SARIF Scan
+      # -------------------------
+      - name: Trivy repo scan → SARIF
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" \
+            aquasec/trivy:latest \
+            fs /repo \
+            --scanners vuln,secret,config \
+            --severity HIGH,CRITICAL \
+            --format sarif \
+            --output /repo/trivy-results.sarif
+
+      # -------------------------
+      # Upload SARIF
+      # -------------------------
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
