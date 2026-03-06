@@ -1,0 +1,25 @@
+# ---------- RUNTIME STAGE ONLY (no dependencies required) ----------
+FROM node:20.11.1-alpine3.19
+
+# Create non-root user with fixed UID
+RUN addgroup -S appgroup \
+    && adduser -S -u 10001 -G appgroup appuser
+
+WORKDIR /app
+
+# Copy only hardened server file
+COPY server-hardened.js ./server-hardened.js
+
+# Lock down permissions
+RUN chown -R appuser:appgroup /app \
+    && chmod -R 500 /app
+
+USER 10001
+
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/healthz', r => process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+
+CMD ["node", "server-hardened.js"]
