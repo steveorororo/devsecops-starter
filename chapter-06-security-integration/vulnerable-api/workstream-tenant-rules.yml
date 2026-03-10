@@ -1,0 +1,50 @@
+rules:
+  - id: workstream-tenant-id-from-body
+    patterns:
+      - pattern: |
+          $X = req.body.tenant_id
+    message: >
+      CRITICAL: tenant_id is being read from request body.
+      At Workstream, tenant_id must ALWAYS come from the 
+      authenticated session (req.auth.tenantId), never from 
+      user-supplied input. This creates a cross-tenant IDOR 
+      vulnerability.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: security
+      subcategory: [idor, multi-tenant]
+      impact: CRITICAL
+      cwe: "CWE-639: Authorization Bypass Through User-Controlled Key"
+
+  - id: workstream-sql-string-concat
+    patterns:
+      - pattern: |
+          `... WHERE ... = '${$VAR}'`
+    message: >
+      SQL query uses string interpolation instead of parameterized 
+      queries. This is a SQL injection vulnerability. Use $1, $2 
+      placeholders with a values array.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: security
+      subcategory: [sqli]
+      impact: HIGH
+      cwe: "CWE-89: SQL Injection"
+
+  - id: workstream-sensitive-data-logging
+    patterns:
+      - pattern: |
+          console.log(<... password ...>)
+    message: >
+      Password or sensitive data is being logged. This violates 
+      SOC 2 and creates credential exposure risk in log aggregation 
+      systems.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: security
+      subcategory: [logging]
+      impact: MEDIUM
+      cwe: "CWE-532: Information Exposure Through Log Files"
