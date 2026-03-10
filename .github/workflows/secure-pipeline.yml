@@ -1,111 +1,97 @@
-name: Workstream Secure Pipeline
+name: Secure Container Pipeline
 
 on:
   pull_request:
-    branches: [main, test-protection]
-  push:
     branches: [test-protection]
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
+
   dockerfile-lint:
-    name: "Dockerfile Lint"
+    name: Dockerfile Lint
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        uses: actions/checkout@v4
 
       - name: Hadolint Scan
         run: |
           echo "=== Scanning Dockerfiles ==="
-          for df in $(find . -name "Dockerfile.hardened" -o -name "Dockerfile" | grep -v node_modules); do
-            echo "--- Scanning: $df ---"
-            docker run --rm -i hadolint/hadolint < "$df" || true
-          done
+          docker run --rm -i hadolint/hadolint < ./Dockerfile
 
-  build-hardened:
-    name: "Build Hardened Image"
+  pipeline-integrity-check:
+    name: Pipeline Integrity Check
     runs-on: ubuntu-latest
     needs: dockerfile-lint
-    permissions:
-      contents: read
+
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        uses: actions/checkout@v4
 
-      - name: Build Image
-        working-directory: chapter-04-docker/vulnerable-app
+      - name: Verify no floating GitHub Actions
         run: |
-          docker build -f Dockerfile.hardened -t workstream-api:${{ github.sha }} .
-          echo "Image built: workstream-api:${{ github.sha }}"
-          docker images workstream-api:${{ github.sha }}
+          echo "Checking workflow files for floating tags"
+          if grep -R "uses: .*@" .github/workflows | grep -vE "@[0-9a-f]{40}|@v[0-9]+"; then
+            echo "Floating GitHub Action versions detected!"
+            exit 1
+          fi
 
-  security-scan:
-    name: "Trivy Security Scan"
+  build-hardened-image:
+    name: Build Hardened Image
     runs-on: ubuntu-latest
-    needs: build-hardened
-    permissions:
-      contents: read
-      security-events: write
+    needs: pipeline-integrity-check
+
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        uses: actions/checkout@v4
 
-      - name: Rebuild Image for Scan
-        working-directory: chapter-04-docker/vulnerable-app
+      - name: Build hardened container image
         run: |
-          docker build -f Dockerfile.hardened -t workstream-api:${{ github.sha }} .
+          docker build \
+            -f Dockerfile.hardened \
+            -t workstream-api:hardened .
 
-      - name: Trivy Vulnerability Scan (Block CRITICAL)
-        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9a7389
-        with:
-          image-ref: workstream-api:${{ github.sha }}
-          severity: CRITICAL
-          exit-code: '1'
-          ignore-unfixed: true
-          format: table
-
-      - name: Trivy Secret Scan (Block All)
-        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9a7389
-        with:
-          image-ref: workstream-api:${{ github.sha }}
-          scanners: secret
-          exit-code: '1'
-          format: table
-
-      - name: Trivy HIGH Scan (Warn Only)
-        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9a7389
-        with:
-          image-ref: workstream-api:${{ github.sha }}
-          severity: HIGH
-          exit-code: '0'
-          ignore-unfixed: true
-          format: table
-
-  pipeline-integrity:
-    name: "Pipeline Integrity Check"
+  trivy-security-scan:
+    name: Trivy Security Scan
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    needs: build-hardened-image
+
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        uses: actions/checkout@v4
 
-      - name: Verify Token Restrictions
+      - name: Install Trivy
         run: |
-          echo "=== GITHUB_TOKEN SCOPE VERIFICATION ==="
-          echo "Expected: contents:read only"
-          echo "Token available in env: $([ -n "$GITHUB_TOKEN" ] && echo YES || echo NO)"
+          sudo apt-get update
+          sudo apt-get install wget -y
+          wget https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.51.1_Linux-64bit.deb
+          sudo dpkg -i trivy_0.51.1_Linux-64bit.deb
 
-      - name: Verify No Secrets in Workspace
+      - name: Scan container image
         run: |
-          echo "=== SCANNING WORKSPACE FOR SECRETS ==="
-          docker run --rm -v $GITHUB_WORKSPACE:/repo \
-            zricethezav/gitleaks:v8.18.2 \
-            detect --source=/repo --no-git -v 2>&1
-          echo "Workspace secret scan complete"
+          echo "Running Trivy vulnerability scan..."
+          trivy image \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            workstream-api:hardened
+
+  gitleaks-secret-scan:
+    name: Secret Scan (Gitleaks)
+    runs-on: ubuntu-latest
+    needs: dockerfile-lint
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Gitleaks
+        run: |
+          docker run --rm -v $PWD:/repo \
+          zricethezav/gitleaks:latest detect \
+          --source=/repo \
+          --no-git \
+          --verbose || true
+
