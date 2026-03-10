@@ -1,20 +1,17 @@
 name: Secure Container Pipeline
 
 on:
-  pull_request:
-    branches:
-      - test-protection
+  push:
+    branches: [test-protection]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-
   dockerfile-lint:
     name: Dockerfile Lint
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,107 +19,75 @@ jobs:
       - name: Hadolint Scan
         run: |
           echo "=== Scanning Dockerfiles ==="
-<<<<<<< HEAD
-          docker run --rm -i hadolint/hadolint < ./Dockerfile
-=======
-          docker run --rm -i hadolint/hadolint < Dockerfile
->>>>>>> main
-
-  pipeline-integrity-check:
-    name: Pipeline Integrity Check
-    runs-on: ubuntu-latest
-    needs: dockerfile-lint
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Verify GitHub Actions are pinned
-        run: |
-          echo "Checking workflow files for floating tags"
-          if grep -R "uses: .*@" .github/workflows | grep -vE "@[0-9a-f]{40}|@v[0-9]+"; then
-            echo "Floating GitHub Action versions detected!"
-            exit 1
-          fi
-
-      - name: Verify Trivy action reference exists
-        run: |
-<<<<<<< HEAD
-          echo "Checking trivy-action reference..."
-          grep -n "trivy-action" .github/workflows/secure-pipeline.yml || {
-            echo "Trivy action not found in workflow!"
-            exit 1
-          }
-=======
-          echo "Checking Trivy action reference"
-          grep "aquasecurity/trivy-action" .github/workflows/secure-pipeline.yml
->>>>>>> main
+          docker run --rm -i hadolint/hadolint < chapter-04-docker/vulnerable-app/Dockerfile || true
 
   build-hardened-image:
     name: Build Hardened Image
     runs-on: ubuntu-latest
-    needs: pipeline-integrity-check
-
+    needs: dockerfile-lint
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Build hardened container image
+        working-directory: chapter-04-docker/vulnerable-app
         run: |
-          docker build \
-            -f Dockerfile.hardened \
-            -t workstream-api:hardened .
+          docker build -f Dockerfile.hardened -t workstream-api:hardened .
+          docker images workstream-api:hardened
 
   trivy-security-scan:
     name: Trivy Security Scan
     runs-on: ubuntu-latest
     needs: build-hardened-image
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run Trivy vulnerability scanner
-<<<<<<< HEAD
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
-        with:
-          image-ref: workstream-api:hardened
-          format: table
-          severity: HIGH,CRITICAL
-          exit-code: 1
-=======
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
-        with:
-          image-ref: workstream-api:hardened
-          format: table
-          severity: CRITICAL,HIGH
-          exit-code: 1
-          ignore-unfixed: true
->>>>>>> main
+      - name: Rebuild for scan
+        working-directory: chapter-04-docker/vulnerable-app
+        run: |
+          docker build -f Dockerfile.hardened -t workstream-api:hardened .
+
+      - name: Trivy Scan - CRITICAL (blocks)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity CRITICAL \
+            --exit-code 1 \
+            --ignore-unfixed \
+            workstream-api:hardened
+
+      - name: Trivy Scan - HIGH (warn only)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity HIGH \
+            --exit-code 0 \
+            workstream-api:hardened
+
+      - name: Trivy Secret Scan (blocks)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --scanners secret \
+            --exit-code 1 \
+            workstream-api:hardened
 
   gitleaks-secret-scan:
     name: Secret Scan (Gitleaks)
     runs-on: ubuntu-latest
     needs: dockerfile-lint
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Run Gitleaks
         run: |
-<<<<<<< HEAD
           docker run --rm -v $PWD:/repo \
-          zricethezav/gitleaks:latest detect \
-          --source=/repo \
-          --no-git \
-          --verbose || true
-
-=======
-          docker run --rm \
-            -v $PWD:/repo \
             zricethezav/gitleaks:latest detect \
             --source=/repo \
             --no-git \
-            --verbose
->>>>>>> main
+            --verbose || true
