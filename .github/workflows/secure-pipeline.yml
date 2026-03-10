@@ -31,13 +31,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify no floating GitHub Actions
+      - name: Verify GitHub Actions are pinned
         run: |
           echo "Checking workflow files for floating tags"
           if grep -R "uses: .*@" .github/workflows | grep -vE "@[0-9a-f]{40}|@v[0-9]+"; then
             echo "Floating GitHub Action versions detected!"
             exit 1
           fi
+
+      - name: Verify Trivy action reference exists
+        run: |
+          echo "Checking trivy-action reference..."
+          grep -n "trivy-action" .github/workflows/secure-pipeline.yml || {
+            echo "Trivy action not found in workflow!"
+            exit 1
+          }
 
   build-hardened-image:
     name: Build Hardened Image
@@ -63,20 +71,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Trivy
-        run: |
-          sudo apt-get update
-          sudo apt-get install wget -y
-          wget https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.51.1_Linux-64bit.deb
-          sudo dpkg -i trivy_0.51.1_Linux-64bit.deb
-
-      - name: Scan container image
-        run: |
-          echo "Running Trivy vulnerability scan..."
-          trivy image \
-            --severity HIGH,CRITICAL \
-            --exit-code 1 \
-            workstream-api:hardened
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: workstream-api:hardened
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: 1
 
   gitleaks-secret-scan:
     name: Secret Scan (Gitleaks)
