@@ -2,7 +2,9 @@ name: Secure Container Pipeline
 
 on:
   pull_request:
-    branches: [test-protection]
+    branches:
+      - test-protection
+  workflow_dispatch:
 
 permissions:
   contents: read
