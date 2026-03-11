@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: public-api-secure
+  namespace: public-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: public-api-secure
+  template:
+    metadata:
+      labels:
+        app: public-api-secure
+        tier: external
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: curlimages/curl:latest
+          command: ["/bin/sh", "-c"]
+          args: ["while true; do sleep 3600; done"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            limits:
+              memory: "128Mi"
+              cpu: "250m"
