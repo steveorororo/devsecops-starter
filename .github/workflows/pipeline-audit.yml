@@ -1,0 +1,124 @@
+name: Pipeline Security Audit
+
+on:
+  push:
+    branches: [test-protection]
+  workflow_dispatch:
+
+# CRITICAL: Restrict default token permissions
+permissions:
+  contents: read
+
+jobs:
+  runner-recon:
+    name: "Runner Environment Reconnaissance"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: "AUDIT - Runner Identity"
+        run: |
+          echo "=== WHO AM I ==="
+          whoami
+          id
+          echo ""
+          echo "=== HOSTNAME ==="
+          hostname
+          echo ""
+          echo "=== OS INFO ==="
+          cat /etc/os-release | head -5
+
+      - name: "AUDIT - Environment Variables"
+        run: |
+          echo "=== GITHUB CONTEXT VARIABLES ==="
+          echo "GITHUB_REPOSITORY: $GITHUB_REPOSITORY"
+          echo "GITHUB_REF: $GITHUB_REF"
+          echo "GITHUB_SHA: $GITHUB_SHA"
+          echo "GITHUB_ACTOR: $GITHUB_ACTOR"
+          echo "GITHUB_WORKFLOW: $GITHUB_WORKFLOW"
+          echo "GITHUB_RUN_ID: $GITHUB_RUN_ID"
+          echo "RUNNER_NAME: $RUNNER_NAME"
+          echo "RUNNER_OS: $RUNNER_OS"
+          echo "RUNNER_TEMP: $RUNNER_TEMP"
+          echo ""
+          echo "=== TOKEN PERMISSIONS ==="
+          echo "GITHUB_TOKEN is set: $([ -n "$GITHUB_TOKEN" ] && echo YES || echo NO)"
+          echo "Token length: ${#GITHUB_TOKEN}"
+          echo ""
+          echo "=== ALL ENV VARS (names only, not values) ==="
+          env | cut -d= -f1 | sort
+
+      - name: "AUDIT - Filesystem Access"
+        run: |
+          echo "=== WORKSPACE ==="
+          ls -la $GITHUB_WORKSPACE
+          echo ""
+          echo "=== HOME DIRECTORY ==="
+          ls -la $HOME
+          echo ""
+          echo "=== DOCKER AVAILABLE? ==="
+          docker version --format '{{.Server.Version}}' 2>/dev/null || echo "Docker not available"
+          echo ""
+          echo "=== NETWORK TOOLS ==="
+          which curl wget nc nmap ssh 2>/dev/null || true
+
+      - name: "AUDIT - Network Access"
+        run: |
+          echo "=== OUTBOUND CONNECTIVITY ==="
+          curl -s -o /dev/null -w "HTTP %{http_code}" https://api.github.com
+          echo ""
+          curl -s -o /dev/null -w "HTTP %{http_code}" https://httpbin.org/get
+          echo ""
+          echo ""
+          echo "=== DNS RESOLUTION ==="
+          nslookup github.com 2>/dev/null | tail -2 || echo "nslookup not available"
+
+      - name: "AUDIT - GITHUB_TOKEN Scope Test"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== TESTING TOKEN CAPABILITIES ==="
+          echo "Can read repo:"
+          curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY" 
+          echo ""
+          echo "Can list secrets (should fail with 403):"
+          curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/secrets"
+          echo ""
+          echo "Can create release (should fail with 403):"
+          curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -X POST \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases" \
+            -d '{"tag_name":"test-unauthorized"}'
+          echo ""
+
+  security-scan:
+    name: "Security Scanning Stage"
+    runs-on: ubuntu-latest
+    needs: runner-recon
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+
+      - name: "SCAN - Repository Secret Detection"
+        run: |
+          echo "=== GITLEAKS SCAN ==="
+          docker run --rm -v $GITHUB_WORKSPACE:/repo \
+            zricethezav/gitleaks:v8.18.2 \
+            detect --source=/repo --no-git -v 2>&1 || true
+
+      - name: "SCAN - Dockerfile Linting"
+        run: |
+          echo "=== HADOLINT ==="
+          if find . -name "Dockerfile*" | head -1 | grep -q .; then
+            docker run --rm -i hadolint/hadolint < $(find . -name "Dockerfile*" -not -name "*.hardened" | head -1) 2>&1 || true
+          else
+            echo "No Dockerfiles found"
+          fi

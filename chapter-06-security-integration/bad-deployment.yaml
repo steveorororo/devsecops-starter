@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workstream-api-bad
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workstream-api
+  template:
+    metadata:
+      labels:
+        app: workstream-api
+    spec:
+      containers:
+        - name: api
+          image: workstream-api:latest
+          ports:
+            - containerPort: 3000
+          securityContext:
+            privileged: true

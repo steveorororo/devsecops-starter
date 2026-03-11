@@ -1,0 +1,175 @@
+pipeline_threat_model:
+  name: Workstream CI/CD Pipeline Threat Model
+  owner: Security Engineering
+  stack: GitHub Actions -> ECR -> EKS
+  version: "1.0"
+
+  stages:
+
+    - stage: SOURCE
+      description: Code commit and pull request process
+
+      asset_at_risk:
+        - Production source code
+        - GitHub workflow files (.github/workflows)
+        - Repository secrets
+        - Branch protection configuration
+
+      threat_actor:
+        - Malicious insider
+        - External attacker with stolen GitHub credentials
+        - Compromised developer laptop
+
+      attack_chain:
+        - Attacker compromises developer credentials
+        - Attacker pushes directly to main or modifies workflow files
+        - Malicious workflow executes on CI runner
+        - Secrets or deploy credentials are exfiltrated
+        - Pipeline integrity is compromised
+
+      control:
+        - Enable branch protection with required PR approvals (min: 2)
+        - Require signed commits
+        - Enforce CODEOWNERS for .github/workflows/*
+        - Restrict workflow token permissions:
+            permissions:
+              contents: read
+        - Enforce GitHub MFA organization-wide
+        - Enable GitHub Advanced Security secret scanning
+
+      detection:
+        - Monitor GitHub audit logs for workflow file changes
+        - Alert on branch protection rule modification
+        - Alert on push to protected branches
+        - Secret scanning alerts
+
+    - stage: BUILD
+      description: Docker image build on GitHub Actions runner
+
+      asset_at_risk:
+        - Docker daemon on runner
+        - OIDC AWS credentials
+        - Build artifacts
+        - Image integrity
+
+      threat_actor:
+        - Malicious third-party GitHub Action
+        - Compromised dependency
+        - Insider modifying workflow
+
+      attack_chain:
+        - Attacker introduces malicious GitHub Action via floating tag
+        - Workflow pulls compromised Action automatically
+        - Runner executes attacker-controlled code
+        - Attacker extracts OIDC token or mounts Docker socket
+        - Backdoored image pushed to ECR
+
+      control:
+        - Pin all GitHub Actions to commit SHA
+        - Disallow floating version tags (@v1)
+        - Use OIDC federation instead of static AWS keys
+        - Restrict IAM role to minimal ECR push permissions
+        - Run Trivy scan before push:
+            command: trivy image --severity HIGH,CRITICAL --exit-code 1 image:tag
+        - Sign images with Cosign:
+            command: cosign sign --key kms://workstream-kms-key image:tag
+
+      detection:
+        - Alert on new GitHub Action usage
+        - Monitor CloudTrail for abnormal ECR pushes
+        - Alert on unsigned image
+        - Store Trivy reports as CI artifacts
+
+    - stage: REGISTRY
+      description: Image storage and promotion in ECR
+
+      asset_at_risk:
+        - Production container images
+        - ECR tag integrity
+        - Registry IAM permissions
+
+      threat_actor:
+        - Compromised CI runner
+        - IAM credential theft
+        - Insider with registry access
+
+      attack_chain:
+        - Attacker steals AWS CI role credentials
+        - Attacker pushes malicious image to ECR
+        - Attacker overwrites production tag
+        - Deployment pulls compromised image
+
+      control:
+        - Enable immutable image tags:
+            command: aws ecr put-image-tag-mutability --image-tag-mutability IMMUTABLE
+        - Separate IAM roles:
+            - CI role: push only
+            - Deploy role: pull only
+        - Enable ECR enhanced image scanning
+        - Enforce Cosign signature verification via Kyverno
+        - Require promotion pipeline for production tags
+
+      detection:
+        - CloudTrail alert on PutImage events
+        - Alert on tag overwrite attempts
+        - Monitor unsigned image pull attempts
+        - Detect ECR pushes outside CI IP ranges
+
+    - stage: DEPLOY
+      description: Deployment to EKS production cluster
+
+      asset_at_risk:
+        - Production Kubernetes cluster
+        - Service account tokens
+        - Application secrets
+        - Customer data
+
+      threat_actor:
+        - Compromised CI role
+        - Lateral movement from compromised pod
+        - Misconfigured RBAC
+
+      attack_chain:
+        - Attacker obtains OIDC-issued deploy role
+        - Attacker modifies deployment manifest
+        - Malicious image deployed to EKS
+        - Pod runs with excessive privileges
+        - Attacker escalates or extracts secrets
+
+      control:
+        - Use IRSA (IAM Roles for Service Accounts)
+        - Restrict CI IAM role to specific namespace
+        - Enforce Kubernetes securityContext baseline:
+            securityContext:
+              runAsNonRoot: true
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                  - ALL
+        - Enforce Kyverno policies:
+            - Block privileged pods
+            - Require signed images
+        - Enable EKS control plane logging
+
+      detection:
+        - AWS GuardDuty EKS findings
+        - Falco runtime anomaly detection
+        - Kubernetes audit logs to SIEM
+        - Alert on new cluster-admin bindings
+        - Alert on privileged pod creation
+
+  crown_jewel_assets:
+    - OIDC-issued AWS deployment role
+    - Workflow modification permissions
+    - Docker daemon access on CI runner
+    - Image signing key (KMS / Cosign)
+
+  trust_progression_model:
+    - Developer
+    - Protected PR
+    - Pinned Build
+    - Signed Image
+    - Verified Registry
+    - Restricted Deploy
+    - Hardened Runtime

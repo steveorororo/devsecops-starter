@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-hr-api-ingress
+  namespace: payroll
+spec:
+  podSelector:
+    matchLabels:
+      app: payroll-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              tier: internal
+          podSelector:
+            matchLabels:
+              app: hr-api
+      ports:
+        - protocol: TCP
+          port: 80
