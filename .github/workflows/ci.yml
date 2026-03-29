@@ -122,7 +122,7 @@ jobs:
       # Upload OPA SARIF to GitHub Security
       # -------------------------
       - name: Upload OPA results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: k8s-opa.sarif
 
